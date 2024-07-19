@@ -48,6 +48,9 @@
 
 import sys
 import os
+from pprint import pprint
+from typing import Optional, List, Any
+
 import serial  # pip install pyserial
 import time
 import datetime
@@ -63,51 +66,49 @@ version = '0.3'
 #       - acceleration data streaming
 ###################################################################################################
 
+
 ###################################################################################################
 class CBMcmd:
     """Class for handling Chronos Base Module commands"""
 
-    def __init__(self, opcode, payload=[]):
+    def __init__(self, opcode: int, payload: bytearray):
         self.opcode = opcode
-        self.payload = bytearray(payload)
+        self.payload = payload
         self.len = len(self.payload) + 3
 
-    def opcode(self, opcode):
+    def opcode(self, opcode: int):
         self.opcode = opcode
 
     @staticmethod
-    def maxlen():
+    def max_len() -> int:
         return 28
 
-    def len(self):
+    def len(self) -> int:
         return self.len
 
-    def payload(self, payload):
+    def payload(self, payload: bytearray | list[int]):
         self.payload = bytearray(payload)
         self.len = len(self.payload) + 3
 
-    def tobytes(self):
+    def to_bytes(self) -> bytearray:
         return bytearray([0xff, self.opcode, self.len]) + bytearray(self.payload)
 
-    def tohex(self):
-        return ' '.join(format(x, '02x') for x in self.tobytes())
-
-    def getitem(self):
-        return self.tobytes()
+    def to_hex(self) -> str:
+        return ' '.join(format(x, '02x') for x in self.to_bytes())
 
 
 ###################################################################################################
 class CBMpayload:
     """Class for handling Chronos Base Module command payloads"""
 
-    def __init__(self, data):
-        self.data = bytearray(data)
+    def __init__(self, d):
+        self.data = bytearray(d)
 
     @staticmethod
-    def maxlen():
-        return CBMcmd.maxlen()
+    def max_len() -> int:
+        return CBMcmd.max_len()
 
-    def tocmd(self, opcode):
+    def to_cmd(self, opcode: int) -> CBMcmd:
         return CBMcmd(opcode, self.data)
 
 
@@ -117,24 +118,24 @@ class CBMburst:
 
     max_burst_len = 0xf7
 
-    def __init__(self, type, data):
-        self.type = type
-        self.data = bytearray(data)
+    def __init__(self, t: int, d: bytearray | list[int]):
+        self.type = t
+        self.data = bytearray(d)
         self.len = len(self.data) + 2
 
     @classmethod
-    def maxlen(cls):
+    def max_len(cls) -> int:
         return cls.max_burst_len
 
     @classmethod
-    def setmaxlen(cls, len):
-        cls.max_burst_len = len
+    def set_max_len(cls, l: int):
+        cls.max_burst_len = l
         if opt.verbose:
-            sys.stderr.write(f'Maximum CBM burst length set to {hex(len)}\n')
+            sys.stderr.write(f'Maximum CBM burst length set to {hex(l)}\n')
 
-    def topayloads(self):
+    def to_payloads(self) -> list[CBMpayload]:
         # Reshape each burst into payloads
-        max_payload_len = CBMpayload.maxlen()
+        max_payload_len = CBMpayload.max_len()
         payloads = []
         burst = bytearray([self.type, self.len - 2]) + self.data
         while burst:
@@ -148,15 +149,15 @@ class CBMburst:
 class CBMchunk:
     """Class for Chronos Base Module chunks"""
 
-    def __init__(self, address, data):
+    def __init__(self, address: int, d: bytearray | list[int]):
         self.address = address
-        self.data = bytearray(data)
+        self.data = bytearray(d)
         self.len = len(self.data) + 2
 
-    def tobursts(self):
+    def to_bursts(self) -> List[CBMburst]:
         # Reshape chunk into burst sequences
-        max_burst_len = CBMburst.maxlen()
-        bursts = []
+        max_burst_len = CBMburst.max_len()
+        bursts: List[CBMburst] = []
         chunk = bytearray([self.address >> 8, self.address & 0xff]) + self.data
         nr = 0
         while chunk:
@@ -177,15 +178,15 @@ class CBMchunk:
 class CBMdata:
     """Class for Chronos Base Module chunked data"""
 
-    def __init__(self, data=[]):
-        self.chunks = []
-        self.data = bytearray(data)
+    def __init__(self):
+        self.chunks: List[CBMchunk] = []
+        self.data = bytearray()
 
-    def importtxt(self, src):
+    def import_txt(self, src: Any):
         if isinstance(src, str):
             if os.path.exists(src):
                 with open(src, 'r') as f:
-                    file_input = file.read()
+                    file_input = f.read()
             else:
                 file_input = src
         elif isinstance(src, list):
@@ -193,7 +194,7 @@ class CBMdata:
         elif isinstance(src, bytearray):
             file_input = str(src)
         else:
-            sys.stderr.write(f'ERROR: unable to handle argument to importtxt\n')
+            sys.stderr.write(f'ERROR: unable to handle argument to import_txt\n')
             sys.exit(9)
 
         # Flatten string by removing spaces and newlines
@@ -211,12 +212,12 @@ class CBMdata:
         for chunk in chunks:
             # First two bytes are address
             address = int(chunk[:4], 16)
-            data = bytearray(chunk[4:].decode('hex'))
+            d = bytearray.fromhex(chunk[4:])
             if opt.verbose:
-                sys.stderr.write(f'Chunk at address @{hex(address)}, length {len(data)}\n')
-            self.chunks.append(CBMchunk(address, data))
+                sys.stderr.write(f'Chunk at address @{hex(address)}, length {len(d)}\n')
+            self.chunks.append(CBMchunk(address, d))
 
-    def tochunks(self):
+    def to_chunks(self) -> List[CBMchunk]:
         return self.chunks
 
 
@@ -224,11 +225,11 @@ class CBMdata:
 class CBM:
     """Class for the Chronos Base Module"""
 
-    def __init__(self, device_name):
-        if opt.verbose:
-            sys.stderr.write(f'Using Chronos Base Module on {device_name}\n')
-        # opt will be decomissioned by the time __del__ is called
+    def __init__(self, device_name: str):
         self.optverbose = opt.verbose
+        self.response: Optional[CBMcmd] = None
+        if self.optverbose:
+            sys.stderr.write(f'Using Chronos Base Module on {device_name}\n')
         self.device = serial.Serial(device_name, 115200, timeout=1)
         self.allstatus()
         if opt.reset:
@@ -237,7 +238,7 @@ class CBM:
         # Original Chronos tool reads twice
         response = self._wbsl_getmaxpayload()
         response = self._wbsl_getmaxpayload()
-        CBMburst.setmaxlen(response.payload[0])
+        CBMburst.set_max_len(response.payload[0])
         self.allstatus()
 
     def __del__(self):
@@ -246,21 +247,21 @@ class CBM:
         # self.reset()
         self.device.close()
 
-    def send(self, cmd):
-        self.device.write(cmd.tobytes())
+    def send(self, cmd: CBMcmd):
+        self.device.write(cmd.to_bytes())
         time.sleep(0.015)
         if opt.verbose:
-            sys.stderr.write(f'SENT: {cmd.tohex()}\n')
+            sys.stderr.write(f'SENT: {cmd.to_hex()}\n')
         response = bytearray(self.device.read(3))
         if response[2] > 3:
             response += bytearray(self.device.read(response[2] - 3))
         self.response = CBMcmd(response[1], response[3:])
         if opt.verbose:
-            sys.stderr.write(f'RECV: {self.response.tohex()}\n')
+            sys.stderr.write(f'RECV: {self.response.to_hex()}\n')
         return self.response
 
-    def sendcmd(self, opcode, payload=[]):
-        cmd = CBMcmd(opcode, payload)
+    def sendcmd(self, opcode, payload: bytearray | list[int] | None = bytearray()):
+        cmd = CBMcmd(opcode, bytearray(payload))
         return self.send(cmd)
 
     def _reset(self):
@@ -388,27 +389,27 @@ class CBM:
     def wbsl_getpacketstatus(self):
         return self._wbsl_getpacketstatus().payload
 
-    def allstatus(self):
-        return [self.getstatus(), self.wbsl_getstatus(), self.wbsl_getpacketstatus()]
+    def allstatus(self) -> bytearray:
+        return self.getstatus() + self.wbsl_getstatus() + self.wbsl_getpacketstatus()
 
-    def sendburst(self, burst):
-        for payload in burst.topayloads():
-            ret = self.send(payload.tocmd(0x47))
+    def sendburst(self, burst) -> Optional[CBMcmd]:
+        ret: Optional[CBMcmd] = None
+        for payload in burst.to_payloads():
+            ret = self.send(payload.to_cmd(0x47))
         return ret
 
-    def sendburstheader(self, bursts):
+    def sendburstheader(self, bursts) -> Optional[CBMcmd]:
         # Construct initial info block
         nr_of_bursts = len(bursts)
         payload = bytearray([0x00, nr_of_bursts & 0xff, nr_of_bursts >> 8])
         return self.sendcmd(0x47, payload)
 
-    def spl_sync(self, dt=[], celsius=0, meters=0):
+    def spl_sync(self, celsius=0, meters=0):
         self.spl_start()
         input('Put your watch in sync mode, wait a few seconds, and press return...')
         time.sleep(2)
 
-        if not dt:
-            dt = datetime.datetime.now()
+        dt = datetime.datetime.now()
 
         payload = bytearray(0x13)
         payload[0x00] = 0x03
@@ -434,10 +435,10 @@ class CBM:
         self.wbsl_start()
         time.sleep(0.5)
 
-        chunklist = data.tochunks()
+        chunklist = data.to_chunks()
         burstlist = []
         for chunk in chunklist:
-            burstlist += chunk.tobursts()
+            burstlist += chunk.to_bursts()
 
         for burst in burstlist:
             done = 0
@@ -466,7 +467,7 @@ class CBM:
 
         # Prepare data for downloading to watch
         updater = CBMdata()
-        updater.importtxt(
+        updater.import_txt(
             """@1D30
 31 40 FE 2B 3C 40 88 29 3D 40 1C 01 B0 13 78 27
 3C 40 52 29 3D 40 84 1E 3E 40 36 00 B0 13 18 28
@@ -647,14 +648,14 @@ CE 26 80 00 C6 25 B2 B0 10 00 02 0F FC 2B 10 01
 @FFFE
 30 1D 
 q""")
-        data = CBMdata()
-        data.importtxt(txtdata)
+        d = CBMdata()
+        d.import_txt(txtdata)
 
         print('Put your watch in rfbsl \'open\' mode and press return. Afterwards,')
         input('wait for a few seconds and start rfbsl download on the watch...')
 
         self.transmitburst(updater)
-        self.transmitburst(data)
+        self.transmitburst(d)
         time.sleep(1)
 
 
